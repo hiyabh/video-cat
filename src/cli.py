@@ -70,8 +70,8 @@ def main():
     parser.add_argument(
         "--font-size",
         type=int,
-        default=24,
-        help="Subtitle font size (default: 24)",
+        default=None,
+        help="Subtitle font size (default: auto-scale by format)",
     )
     parser.add_argument(
         "--no-animate",

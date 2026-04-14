@@ -54,12 +54,12 @@ class ProcessingOptions:
     def get_font_size(self) -> int:
         if self.font_size:
             return self.font_size
-        # Auto-scale by format
+        # Viral-style large subtitles (~8-10% of screen height)
         if self.format == "vertical":
-            return 64
+            return 140  # 1920 * 0.073
         elif self.format == "square":
-            return 56
-        return 48  # horizontal
+            return 110
+        return 90  # horizontal
 
 
 def cut_clip(
@@ -258,8 +258,8 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,{font_name},{font_size},{options.font_color},&H000000FF,{options.outline_color},&H80000000,-1,0,0,0,100,100,0,0,1,{options.outline_width},2,2,40,40,{margin_v},0
-Style: Highlight,{font_name},{font_size},&H0000FFFF,&H000000FF,{options.outline_color},&H80000000,-1,0,0,0,100,100,0,0,1,{options.outline_width},2,2,40,40,{margin_v},0
+Style: Default,{font_name},{font_size},{options.font_color},&H000000FF,{options.outline_color},&H80000000,-1,0,0,0,100,100,0,0,1,{options.outline_width * 2},3,2,60,60,{margin_v},0
+Style: Highlight,{font_name},{font_size},&H0000FFFF,&H000000FF,{options.outline_color},&H80000000,-1,0,0,0,100,100,0,0,1,{options.outline_width * 2},3,2,60,60,{margin_v},0
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -270,10 +270,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         end_ts = _format_ass_timestamp(seg.end)
         text = seg.text.strip()
 
-        # Apply bidi for RTL languages — ASS/libass doesn't handle Hebrew/Arabic properly
-        if is_rtl:
-            text = _apply_bidi(text)
-
+        # libass handles BiDi natively via fribidi — pass logical order text as-is
         if options.animate_words and seg.words and len(seg.words) > 1 and not is_rtl:
             # Karaoke animation works poorly with RTL — use plain text for Hebrew/Arabic
             animated = _animate_words_karaoke_wtimes(seg.words, seg.start)
