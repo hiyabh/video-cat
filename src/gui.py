@@ -9,6 +9,7 @@ import customtkinter as ctk
 from .config import Config, FORMAT_PRESETS, SUPPORTED_VIDEO_EXTENSIONS
 from .pipeline import run_pipeline
 from .video_processor import ProcessingOptions
+from .bootstrap import ensure_ready, DEFAULT_MODEL
 
 
 class VideoCatApp(ctk.CTk):
@@ -179,15 +180,40 @@ class VideoCatApp(ctk.CTk):
             return
 
         self._is_processing = True
-        self.process_btn.configure(state="disabled", text="Processing...")
+        self.process_btn.configure(state="disabled", text="Checking setup...")
         self.log_text.delete("1.0", "end")
         self.progress_bar.set(0)
 
         thread = threading.Thread(target=self._process_thread, args=(video_path,), daemon=True)
         thread.start()
 
+    def _ensure_ready(self) -> bool:
+        """Check Ollama + model before processing."""
+        config = Config()
+        if config.llm_provider != "ollama":
+            return True  # Cloud LLM — no bootstrap needed
+
+        self.after(0, lambda: self.status_label.configure(text="Checking Ollama..."))
+
+        def _progress(msg: str, pct: int):
+            self.after(0, self._log, f"[setup] {msg}")
+            if pct:
+                self.after(0, lambda: self.progress_bar.set(pct / 100))
+
+        ok, msg = ensure_ready(config.ollama_model, progress_callback=_progress)
+        if not ok:
+            self.after(0, self._log, f"Setup error: {msg}")
+            return False
+        self.after(0, self._log, "Setup OK")
+        return True
+
     def _process_thread(self, video_path: str):
         try:
+            if not self._ensure_ready():
+                self.after(0, self._on_error, "Setup failed. See log above.")
+                return
+
+            self.after(0, lambda: self.process_btn.configure(text="Processing..."))
             config = Config()
             config.max_clips = int(self.clips_slider.get())
             config.default_language = self.lang_var.get()

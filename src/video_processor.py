@@ -1,7 +1,9 @@
 """Video processing with FFmpeg — cutting, subtitles, format, overlays."""
 
+import os
 import subprocess
 import shutil
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -10,8 +12,21 @@ from .clip_detector import ClipSuggestion
 from .transcriber import TranscriptionResult, Segment
 
 
-FFMPEG = shutil.which("ffmpeg") or "ffmpeg"
-FFPROBE = shutil.which("ffprobe") or "ffprobe"
+def _find_binary(name: str) -> str:
+    """Find binary: prefer bundled (PyInstaller _internal), then PATH."""
+    # PyInstaller frozen: check _MEIPASS and sys.executable dir
+    if getattr(sys, "frozen", False):
+        for base in (Path(sys._MEIPASS), Path(sys.executable).parent, Path(sys.executable).parent / "_internal"):
+            candidate = base / f"{name}.exe"
+            if candidate.exists():
+                return str(candidate)
+    # Dev mode: PATH
+    found = shutil.which(name)
+    return found if found else name
+
+
+FFMPEG = _find_binary("ffmpeg")
+FFPROBE = _find_binary("ffprobe")
 
 
 @dataclass

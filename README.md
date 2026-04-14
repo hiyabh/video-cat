@@ -107,6 +107,38 @@ output/
 | `MAX_CLIP_DURATION` | `90` | Max clip length (seconds) |
 | `DEFAULT_FORMAT` | `vertical` | vertical / square / horizontal |
 
+## Distribution — Build EXE + Installer
+
+For distributing to non-technical users, VideoCat can be packaged as a Windows installer:
+
+### Prerequisites
+- Python + dependencies (`pip install -r requirements.txt`)
+- FFmpeg installed (will be bundled automatically)
+- [Inno Setup 6](https://jrsoftware.org/isdl.php) (for installer, optional)
+
+### Build
+```bash
+build.bat
+```
+
+Output:
+- `dist\VideoCat\VideoCat.exe` — standalone app folder (~680MB, includes FFmpeg + Whisper)
+- `dist\VideoCat_Setup.exe` — single-file installer with setup wizard
+
+### What the installer does
+1. Installs VideoCat to Program Files
+2. Creates desktop shortcut + Start menu entry
+3. Prompts user to download [Ollama](https://ollama.com) (required for local AI)
+4. On first run — auto-downloads Llama 3.2 3B model (~2GB, one-time)
+
+### What the end user needs
+- Windows 10/11 (x64)
+- 4GB RAM minimum (8GB recommended)
+- ~5GB disk space (app + model + Ollama)
+- Internet connection on first run (to download Ollama + model)
+
+After first run — **fully offline**. No API keys, no internet required.
+
 ## Tech Stack
 
 - **faster-whisper** — local speech-to-text (CTranslate2)
