@@ -9,7 +9,12 @@ from pathlib import Path
 
 from .config import Config, FORMAT_PRESETS
 from .clip_detector import ClipSuggestion
-from .transcriber import TranscriptionResult, Segment
+from .transcriber import TranscriptionResult, Segment, Word
+
+
+RTL_LANGS = {"he", "ar", "fa", "ur", "yi", "iw"}
+WORDS_PER_SUBTITLE = 5
+MAX_SUBTITLE_DURATION = 3.0
 
 
 def _find_binary(name: str) -> str:
@@ -34,16 +39,27 @@ class ProcessingOptions:
     format: str = "vertical"
     subtitle_style: str = "modern"
     font_path: Path | None = None
-    font_size: int = 24
+    font_size: int | None = None  # auto-scale by format if None
     font_color: str = "&H00FFFFFF"
     outline_color: str = "&H00000000"
-    outline_width: int = 3
+    outline_width: int = 4
     background_music: Path | None = None
     music_volume: float = 0.15
     logo_path: Path | None = None
     logo_position: str = "top_right"
     logo_scale: float = 0.12
     animate_words: bool = True
+    language: str = "auto"  # set from transcription for RTL detection
+
+    def get_font_size(self) -> int:
+        if self.font_size:
+            return self.font_size
+        # Auto-scale by format
+        if self.format == "vertical":
+            return 64
+        elif self.format == "square":
+            return 56
+        return 48  # horizontal
 
 
 def cut_clip(
@@ -161,16 +177,56 @@ def _get_segments_for_clip(
     transcription: TranscriptionResult,
     clip: ClipSuggestion,
 ) -> list[Segment]:
-    """Extract transcription segments that fall within the clip timerange."""
-    return [
-        Segment(
-            start=max(0, seg.start - clip.start),
-            end=seg.end - clip.start,
-            text=seg.text,
-        )
-        for seg in transcription.segments
-        if seg.end > clip.start and seg.start < clip.end
-    ]
+    """Extract and re-chunk transcription into small subtitle-friendly segments."""
+    # Collect all words within the clip range
+    words_in_clip = []
+    for seg in transcription.segments:
+        if seg.end <= clip.start or seg.start >= clip.end:
+            continue
+        if seg.words:
+            for w in seg.words:
+                if w.end > clip.start and w.start < clip.end:
+                    words_in_clip.append(Word(
+                        start=max(0, w.start - clip.start),
+                        end=w.end - clip.start,
+                        text=w.text,
+                    ))
+        else:
+            # Fallback — no word timestamps, use segment as one chunk
+            words_in_clip.append(Word(
+                start=max(0, seg.start - clip.start),
+                end=seg.end - clip.start,
+                text=seg.text,
+            ))
+
+    # Group words into small chunks (N words or max duration)
+    chunks = []
+    current = []
+    for w in words_in_clip:
+        if not current:
+            current.append(w)
+            continue
+        chunk_start = current[0].start
+        chunk_duration = w.end - chunk_start
+        if len(current) >= WORDS_PER_SUBTITLE or chunk_duration >= MAX_SUBTITLE_DURATION:
+            chunks.append(current)
+            current = [w]
+        else:
+            current.append(w)
+    if current:
+        chunks.append(current)
+
+    # Build Segment per chunk
+    segments = []
+    for chunk in chunks:
+        text = "".join(w.text for w in chunk).strip()
+        segments.append(Segment(
+            start=chunk[0].start,
+            end=chunk[-1].end,
+            text=text,
+            words=chunk,
+        ))
+    return segments
 
 
 def _generate_ass_subtitles(
@@ -183,23 +239,27 @@ def _generate_ass_subtitles(
     fmt = FORMAT_PRESETS.get(options.format, FORMAT_PRESETS["vertical"])
     play_res_x = fmt["width"]
     play_res_y = fmt["height"]
-    margin_v = int(play_res_y * 0.12)
+    margin_v = int(play_res_y * 0.10)
+    font_size = options.get_font_size()
 
     font_name = "Arial"
     if options.font_path and options.font_path.exists():
         font_name = options.font_path.stem
+
+    is_rtl = options.language in RTL_LANGS
 
     header = f"""[Script Info]
 Title: VideoCat Subtitles
 ScriptType: v4.00+
 PlayResX: {play_res_x}
 PlayResY: {play_res_y}
-WrapStyle: 0
+WrapStyle: 2
+ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,{font_name},{options.font_size},{options.font_color},&H000000FF,{options.outline_color},&H80000000,-1,0,0,0,100,100,0,0,1,{options.outline_width},0,2,20,20,{margin_v},0
-Style: Highlight,{font_name},{options.font_size},&H0000FFFF,&H000000FF,{options.outline_color},&H80000000,-1,0,0,0,100,100,0,0,1,{options.outline_width},0,2,20,20,{margin_v},0
+Style: Default,{font_name},{font_size},{options.font_color},&H000000FF,{options.outline_color},&H80000000,-1,0,0,0,100,100,0,0,1,{options.outline_width},2,2,40,40,{margin_v},0
+Style: Highlight,{font_name},{font_size},&H0000FFFF,&H000000FF,{options.outline_color},&H80000000,-1,0,0,0,100,100,0,0,1,{options.outline_width},2,2,40,40,{margin_v},0
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -210,8 +270,13 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         end_ts = _format_ass_timestamp(seg.end)
         text = seg.text.strip()
 
-        if options.animate_words and len(text.split()) > 1:
-            animated = _animate_words_karaoke(text, seg.start, seg.end)
+        # Apply bidi for RTL languages — ASS/libass doesn't handle Hebrew/Arabic properly
+        if is_rtl:
+            text = _apply_bidi(text)
+
+        if options.animate_words and seg.words and len(seg.words) > 1 and not is_rtl:
+            # Karaoke animation works poorly with RTL — use plain text for Hebrew/Arabic
+            animated = _animate_words_karaoke_wtimes(seg.words, seg.start)
             events.append(
                 f"Dialogue: 0,{start_ts},{end_ts},Default,,0,0,0,,{animated}"
             )
@@ -221,6 +286,30 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             )
 
     output_path.write_text(header + "\n".join(events), encoding="utf-8-sig")
+
+
+def _apply_bidi(text: str) -> str:
+    """Apply BiDi algorithm to get visual-order text for RTL languages."""
+    try:
+        from bidi.algorithm import get_display
+        return get_display(text)
+    except ImportError:
+        return text
+
+
+def _animate_words_karaoke_wtimes(words: list, chunk_start: float) -> str:
+    """Build karaoke timing from actual word timestamps."""
+    parts = []
+    prev_end = chunk_start
+    for w in words:
+        # Gap before this word (silence)
+        gap_cs = max(0, int((w.start - prev_end) * 100))
+        if gap_cs > 0:
+            parts.append(f"{{\\k{gap_cs}}}")
+        duration_cs = max(1, int((w.end - w.start) * 100))
+        parts.append(f"{{\\kf{duration_cs}}}{w.text}")
+        prev_end = w.end
+    return "".join(parts).strip()
 
 
 def _animate_words_karaoke(text: str, start: float, end: float) -> str:

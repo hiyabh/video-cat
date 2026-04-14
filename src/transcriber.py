@@ -9,10 +9,18 @@ from .config import Config
 
 
 @dataclass
+class Word:
+    start: float
+    end: float
+    text: str
+
+
+@dataclass
 class Segment:
     start: float
     end: float
     text: str
+    words: list = None
 
     @property
     def duration(self) -> float:
@@ -82,10 +90,15 @@ class Transcriber:
 
         segments = []
         for seg in segments_gen:
+            words = []
+            if seg.words:
+                for w in seg.words:
+                    words.append(Word(start=w.start, end=w.end, text=w.word))
             segments.append(Segment(
                 start=seg.start,
                 end=seg.end,
                 text=seg.text,
+                words=words,
             ))
 
         lang = info.language

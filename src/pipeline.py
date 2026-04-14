@@ -67,6 +67,9 @@ def run_pipeline(
         )
 
     # Step 3: Process each clip
+    # Propagate detected language to options for proper RTL handling
+    options.language = transcription.language
+
     output_clips = []
     for i, clip in enumerate(suggestions):
         pct = 40 + int((i / len(suggestions)) * 55)

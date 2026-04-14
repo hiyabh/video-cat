@@ -4,4 +4,5 @@ anthropic>=0.42.0
 openai>=1.60.0
 customtkinter>=5.2.0
 Pillow>=10.0.0
+python-bidi>=0.4.2
 pyinstaller>=6.0.0
