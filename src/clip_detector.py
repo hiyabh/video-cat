@@ -63,7 +63,50 @@ def detect_clips_with_llm(
         print(f"[clip_detector] LLM error: {e}. Using fallback uniform split.")
         return detect_clips_uniform(transcription, config)
 
-    return _parse_response(raw)
+    clips = _parse_response(raw)
+    return _validate_clips(clips, transcription, config)
+
+
+def _validate_clips(
+    clips: list[ClipSuggestion],
+    transcription: TranscriptionResult,
+    config: Config,
+) -> list[ClipSuggestion]:
+    """Enforce duration constraints — extend short clips, drop impossible ones."""
+    total = transcription.duration
+    valid = []
+    for clip in clips:
+        # Clamp to video bounds
+        start = max(0.0, min(clip.start, total))
+        end = max(0.0, min(clip.end, total))
+
+        duration = end - start
+        if duration < config.min_clip_duration:
+            # Extend end to reach minimum
+            needed = config.min_clip_duration - duration
+            end = min(total, end + needed)
+            # If still too short, also pull start back
+            if end - start < config.min_clip_duration:
+                start = max(0.0, start - (config.min_clip_duration - (end - start)))
+
+            # Snap to segment boundary for natural cut
+            end = _snap_to_segment_boundary(end, transcription)
+
+            duration = end - start
+            if duration < config.min_clip_duration * 0.7:
+                print(f"[clip_detector] Skipping too-short clip: {clip.title} ({duration:.1f}s)")
+                continue
+            print(f"[clip_detector] Extended short clip: {clip.title} -> {duration:.1f}s")
+
+        # Cap max duration
+        if duration > config.max_clip_duration:
+            end = start + config.max_clip_duration
+            end = _snap_to_segment_boundary(end, transcription)
+
+        valid.append(ClipSuggestion(
+            start=start, end=end, title=clip.title, reason=clip.reason,
+        ))
+    return valid
 
 
 def detect_clips_uniform(
