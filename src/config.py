@@ -20,6 +20,9 @@ class Config:
     # LLM
     anthropic_api_key: str = os.getenv("ANTHROPIC_API_KEY", "")
     openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
+    ollama_model: str = os.getenv("OLLAMA_MODEL", "llama3.2:3b")
+    ollama_host: str = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+    llm_backend: str = os.getenv("LLM_BACKEND", "ollama")  # ollama | anthropic | openai | none
 
     # Whisper
     whisper_model: str = os.getenv("WHISPER_MODEL", "base")
@@ -47,11 +50,19 @@ class Config:
 
     @property
     def llm_provider(self) -> str:
+        # Explicit backend override wins
+        if self.llm_backend == "ollama":
+            return "ollama"
+        if self.llm_backend == "anthropic" and self.anthropic_api_key:
+            return "anthropic"
+        if self.llm_backend == "openai" and self.openai_api_key:
+            return "openai"
+        # Auto-detect fallback
         if self.anthropic_api_key:
             return "anthropic"
         if self.openai_api_key:
             return "openai"
-        return "none"
+        return "ollama"  # default to local
 
 
 FORMAT_PRESETS = {

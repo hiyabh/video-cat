@@ -6,6 +6,8 @@ Turn long videos into short viral clips with auto-subtitles — locally on your 
 
 - **Auto-transcription** — faster-whisper (local, free, supports Hebrew/English/Arabic/Spanish/French)
 - **Smart clip detection** — LLM analyzes transcript to find viral-worthy moments
+  - **Ollama + Llama 3.2 3B** (local, free, ~2GB RAM) — default
+  - **Claude / GPT** (cloud, higher quality)
 - **Auto-subtitles** — burned onto video with word-by-word animation (ASS format)
 - **Format presets** — 9:16 (TikTok/Reels), 1:1 (Instagram), 16:9 (YouTube)
 - **Background music** — mix any audio at adjustable volume
@@ -17,6 +19,7 @@ Turn long videos into short viral clips with auto-subtitles — locally on your 
 
 - Python 3.11+
 - FFmpeg installed and in PATH
+- **Ollama** (optional, for local LLM) — https://ollama.com
 
 ## Setup
 
@@ -28,9 +31,13 @@ cd video-cat
 # Install dependencies
 pip install -r requirements.txt
 
+# Install Ollama + model (for local LLM, no API key needed)
+# Download Ollama from https://ollama.com
+ollama pull llama3.2:3b
+
 # Configure
 cp .env.example .env
-# Edit .env — add your Anthropic or OpenAI API key
+# Default uses Ollama (local). Edit .env to switch to Claude/GPT.
 ```
 
 ## Usage
@@ -88,8 +95,11 @@ output/
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `ANTHROPIC_API_KEY` | — | Claude API key for clip detection |
-| `OPENAI_API_KEY` | — | Alternative: GPT API key |
+| `LLM_BACKEND` | `ollama` | `ollama` / `anthropic` / `openai` / `none` |
+| `OLLAMA_MODEL` | `llama3.2:3b` | Local model via Ollama |
+| `OLLAMA_HOST` | `http://localhost:11434` | Ollama server URL |
+| `ANTHROPIC_API_KEY` | — | Claude API key (if using cloud) |
+| `OPENAI_API_KEY` | — | GPT API key (if using cloud) |
 | `WHISPER_MODEL` | `base` | Whisper model (tiny/base/small/medium/large-v3) |
 | `DEFAULT_LANGUAGE` | `auto` | Language code or auto-detect |
 | `MAX_CLIPS` | `5` | Max clips per video |
@@ -101,5 +111,6 @@ output/
 
 - **faster-whisper** — local speech-to-text (CTranslate2)
 - **FFmpeg** — video processing, subtitles, audio mixing
-- **Claude / GPT** — intelligent clip selection
+- **Ollama + Llama 3.2 3B** — local LLM for clip selection (default)
+- **Claude / GPT** — optional cloud LLM for higher quality
 - **CustomTkinter** — modern dark-theme GUI

@@ -21,26 +21,19 @@ class ClipSuggestion:
         return self.end - self.start
 
 
-CLIP_DETECTION_PROMPT = """You are a viral video editor. Analyze this transcript and find the {max_clips} most engaging, viral-worthy segments.
+CLIP_DETECTION_PROMPT = """You are a viral video editor. Find the {max_clips} most engaging segments in this transcript.
 
 Rules:
-- Each clip should be {min_duration}-{max_duration} seconds long
-- Look for: emotional moments, surprising statements, funny lines, strong opinions, key insights, quotable phrases
-- Clips must start and end at natural sentence boundaries
-- Prefer segments that work as standalone content (make sense without context)
+- Each clip: {min_duration}-{max_duration} seconds long
+- Look for: emotional moments, surprising statements, funny lines, strong opinions, insights, quotable phrases
+- Start/end at natural sentence boundaries
+- Prefer segments that work standalone
 
-Transcript (with timestamps in seconds):
+Transcript:
 {transcript}
 
-Respond with ONLY a JSON array, no other text:
-[
-  {{
-    "start": 12.5,
-    "end": 45.2,
-    "title": "short catchy title for this clip",
-    "reason": "why this segment is engaging"
-  }}
-]"""
+IMPORTANT: Return a SINGLE JSON object with ONE "clips" array. No duplicates. Exact format:
+{{"clips":[{{"start":12.5,"end":45.2,"title":"catchy title","reason":"why engaging"}}]}}"""
 
 
 def detect_clips_with_llm(
@@ -56,12 +49,18 @@ def detect_clips_with_llm(
         transcript=transcript_text,
     )
 
-    if config.llm_provider == "anthropic":
-        raw = _call_anthropic(prompt, config.anthropic_api_key)
-    elif config.llm_provider == "openai":
-        raw = _call_openai(prompt, config.openai_api_key)
-    else:
-        print("[clip_detector] No LLM key found, using fallback uniform split")
+    try:
+        if config.llm_provider == "anthropic":
+            raw = _call_anthropic(prompt, config.anthropic_api_key)
+        elif config.llm_provider == "openai":
+            raw = _call_openai(prompt, config.openai_api_key)
+        elif config.llm_provider == "ollama":
+            raw = _call_ollama(prompt, config.ollama_model, config.ollama_host)
+        else:
+            print("[clip_detector] No LLM configured, using fallback uniform split")
+            return detect_clips_uniform(transcription, config)
+    except Exception as e:
+        print(f"[clip_detector] LLM error: {e}. Using fallback uniform split.")
         return detect_clips_uniform(transcription, config)
 
     return _parse_response(raw)
@@ -113,6 +112,36 @@ def _call_anthropic(prompt: str, api_key: str) -> str:
     return response.content[0].text
 
 
+def _call_ollama(prompt: str, model: str, host: str) -> str:
+    import urllib.request
+    import urllib.error
+
+    print(f"[clip_detector] Analyzing transcript with Ollama ({model})...")
+    payload = json.dumps({
+        "model": model,
+        "prompt": prompt,
+        "stream": False,
+        "format": "json",
+        "options": {"temperature": 0.1, "top_p": 0.9, "num_ctx": 8192},
+    }).encode("utf-8")
+
+    req = urllib.request.Request(
+        f"{host}/api/generate",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=300) as response:
+            data = json.loads(response.read().decode("utf-8"))
+            return data.get("response", "")
+    except urllib.error.URLError as e:
+        raise RuntimeError(
+            f"Cannot reach Ollama at {host}. Is it running? "
+            f"Start with: ollama serve. Original: {e}"
+        )
+
+
 def _call_openai(prompt: str, api_key: str) -> str:
     from openai import OpenAI
 
@@ -127,20 +156,45 @@ def _call_openai(prompt: str, api_key: str) -> str:
 
 
 def _parse_response(raw: str) -> list[ClipSuggestion]:
-    json_match = re.search(r"\[.*\]", raw, re.DOTALL)
-    if not json_match:
-        print(f"[clip_detector] Warning: Could not parse LLM response")
-        return []
+    # Try direct JSON parse (Ollama format=json)
+    data = None
+    try:
+        parsed = json.loads(raw)
+        if isinstance(parsed, list):
+            data = parsed
+        elif isinstance(parsed, dict):
+            # Some models wrap in {"clips": [...]}
+            for key in ("clips", "segments", "results", "data"):
+                if key in parsed and isinstance(parsed[key], list):
+                    data = parsed[key]
+                    break
+    except (json.JSONDecodeError, TypeError):
+        pass
 
-    data = json.loads(json_match.group())
+    # Fallback: extract JSON array from text
+    if data is None:
+        json_match = re.search(r"\[.*\]", raw, re.DOTALL)
+        if not json_match:
+            print("[clip_detector] Warning: Could not parse LLM response")
+            return []
+        try:
+            data = json.loads(json_match.group())
+        except json.JSONDecodeError as e:
+            print(f"[clip_detector] JSON parse error: {e}")
+            return []
+
     clips = []
     for item in data:
-        clips.append(ClipSuggestion(
-            start=float(item["start"]),
-            end=float(item["end"]),
-            title=item.get("title", "Untitled"),
-            reason=item.get("reason", ""),
-        ))
+        try:
+            clips.append(ClipSuggestion(
+                start=float(item["start"]),
+                end=float(item["end"]),
+                title=item.get("title", "Untitled"),
+                reason=item.get("reason", ""),
+            ))
+        except (KeyError, ValueError, TypeError) as e:
+            print(f"[clip_detector] Skipping malformed clip: {e}")
+            continue
     return clips
 
 
